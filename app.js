@@ -30,7 +30,6 @@ let currentPrivateKey = "";
 let activeTargetUser = ""; 
 let unsubscribeChat = null;
 
-// 使用 window.forge 確保在全域安全調用，絕不發生環境衝突
 const forgeObj = window.forge;
 
 // =================密碼學晶片工具=================
@@ -79,7 +78,6 @@ function encryptRSA(text, publicKeyPem) {
     return forgeObj.util.encode64(encrypted);
 }
 
-// 修改對應解密區塊以符合標準規格
 function decryptRSA(cryptoB64, privateKeyPem) {
     const privateKey = forgeObj.pki.privateKeyFromPem(privateKeyPem);
     const encryptedBytes = forgeObj.util.decode64(cryptoB64);
@@ -91,7 +89,6 @@ function decryptRSA(cryptoB64, privateKeyPem) {
 
 // =================系統核心功能=================
 
-// 1. 註冊帳號：生成 RSA 並自動託管加密私鑰
 document.getElementById('btnRegister').addEventListener('click', async () => {
     const email = document.getElementById('regEmail').value.trim().toLowerCase();
     const password = document.getElementById('regPassword').value;
@@ -103,7 +100,6 @@ document.getElementById('btnRegister').addEventListener('click', async () => {
             const { privateKeyPem, publicKeyPem } = generateKeyPair();
             const lockedPrivateKey = encryptPrivateKeyWithPassword(privateKeyPem, password);
             
-            // 使用文件 ID 精確定位寫入，避免模糊檢索
             await setDoc(doc(dbKeyVault, "users", email), {
                 email: email,
                 public_key: publicKeyPem,
@@ -119,7 +115,7 @@ document.getElementById('btnRegister').addEventListener('click', async () => {
     }, 200);
 });
 
-// 2. 密碼驗證登入：透過文件 ID 精準秒讀數據
+// 2. 登入成功後：隱藏區塊、顯示登出按鈕
 document.getElementById('btnLogin').addEventListener('click', async () => {
     const email = document.getElementById('loginEmail').value.trim().toLowerCase();
     const password = document.getElementById('loginPassword').value;
@@ -136,12 +132,49 @@ document.getElementById('btnLogin').addEventListener('click', async () => {
         currentUser = email;
         
         document.getElementById('lblMyStatus').innerText = `🟢 在線: ${currentUser}`;
-        alert('🔑 密碼驗證成功，私鑰已自動就位！');
+        document.getElementById('lblMyStatus').style.color = "#4ade80"; // 變成綠色字體
+        
+        // 🌟 核心修改：隱藏登入區塊，顯示登出按鈕
+        document.getElementById('authSection').style.display = 'none';
+        document.getElementById('btnLogout').style.display = 'block';
+        
+        // 清空輸入框
+        document.getElementById('loginEmail').value = "";
+        document.getElementById('loginPassword').value = "";
+
         loadFriendList();
-    } catch (e) { alert('登入失敗: ' + e.message); }
+    } catch (e) { alert('登入失敗: 密碼錯誤或網路異常'); }
 });
 
-// 3. 載入聯絡人名單
+// 2.5 登出功能：恢復登入介面，清空記憶體與聊天室
+document.getElementById('btnLogout').addEventListener('click', () => {
+    // 抹除記憶體中的金鑰與帳號
+    currentUser = "";
+    currentPrivateKey = "";
+    activeTargetUser = "";
+    
+    // 關閉聊天室監聽
+    if (unsubscribeChat) {
+        unsubscribeChat();
+        unsubscribeChat = null;
+    }
+    
+    // 恢復 UI 狀態
+    document.getElementById('lblMyStatus').innerText = "🔴 請先註冊或登入";
+    document.getElementById('lblMyStatus').style.color = "#cbd5e1";
+    document.getElementById('authSection').style.display = 'flex';
+    document.getElementById('btnLogout').style.display = 'none';
+    
+    // 清空朋友清單與對話框
+    document.getElementById('friendList').innerHTML = "<div style='text-align:center; color:#8e8e93; font-size:12px; margin-top:20px;'>請先登入以載入朋友名單</div>";
+    document.getElementById('chatTitle').innerText = "💬 請選擇左側聯絡人開始聊天";
+    document.getElementById('chatHistory').innerHTML = "<div style='text-align: center; color: #8e8e93; margin-top: 50px; font-size: 14px;'>沒有選取的對話</div>";
+    
+    // 鎖住輸入框
+    document.getElementById('msgContent').disabled = true;
+    document.getElementById('btnSend').disabled = true;
+});
+
 async function loadFriendList() {
     const friendListContainer = document.getElementById('friendList');
     friendListContainer.innerHTML = "載入聯絡人中...";
@@ -165,7 +198,6 @@ async function loadFriendList() {
     } catch(e) { console.error(e); }
 }
 
-// 4. 即時同步聊天室
 function openChatWith(targetEmail) {
     activeTargetUser = targetEmail;
     document.getElementById('chatTitle').innerText = `💬 與 ${targetEmail} 通訊中`;
@@ -198,14 +230,12 @@ function openChatWith(targetEmail) {
     });
 }
 
-// 5. 快速發送核心 (按鈕與 Enter 鍵同步)
 async function sendMessage() {
     const msgInput = document.getElementById('msgContent');
     const msg = msgInput.value;
     if (!msg || !activeTargetUser) return;
     
     try {
-        // 使用高效的文件 ID 精確讀取公鑰
         const [targetSnap, meSnap] = await Promise.all([
             getDoc(doc(dbKeyVault, "users", activeTargetUser)),
             getDoc(doc(dbKeyVault, "users", currentUser))
