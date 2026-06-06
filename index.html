@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🔒 CipherTalk 雙庫分離安全網頁版</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f0f2f5; margin: 0; padding: 20px; }
+        .container { max-width: 650px; margin: 30px auto; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }
+        h1 { text-align: center; color: #2c3e50; margin-bottom: 5px; }
+        .subtitle { text-align: center; color: #7f8c8d; font-size: 14px; margin-bottom: 30px; }
+        .box { border: 1px solid #e2e8f0; padding: 20px; margin-bottom: 20px; border-radius: 8px; background: #f8fafc; }
+        h3 { margin-top: 0; color: #1e293b; border-bottom: 2px solid #cbd5e1; padding-bottom: 8px; }
+        label { font-weight: 600; display: block; margin: 10px 0 5px 0; color: #475569; }
+        input, textarea, button { width: 100%; padding: 12px; margin-bottom: 10px; border-radius: 6px; border: 1px solid #cbd5e1; box-sizing: border-box; font-size: 14px; }
+        input:focus, textarea:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.1); }
+        button { background-color: #2563eb; color: white; border: none; cursor: pointer; font-weight: bold; transition: background 0.2s; }
+        button:hover { background-color: #1d4ed8; }
+        .btn-secondary { background-color: #059669; }
+        .btn-secondary:hover { background-color: #047857; }
+        textarea { height: 90px; resize: vertical; }
+        .secret-area { background-color: #fef08a; color: #713f12; word-break: break-all; font-family: monospace; font-size: 12px; }
+        .msg-item { background: white; padding: 12px; border-left: 4px solid #2563eb; margin-top: 10px; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>🔒 CipherTalk</h1>
+    <div class="subtitle">企業級「雙數據庫隔離」端到端加密通訊系統</div>
+
+    <div class="box">
+        <h3>🔑 階段一：身分註冊與密鑰庫匯入 (API Key A)</h3>
+        <label>您的測試 Email 帳號</label>
+        <input type="email" id="myEmail" placeholder="例如: alice@test.com">
+        <button id="btnRegister">✨ 生成 2048-bit RSA 金鑰並上傳公鑰</button>
+        
+        <div id="keyBox" style="display:none; margin-top: 15px;">
+            <label style="color: #b91c1c;">⚠️ 請複製並妥善備份您的「本地私鑰」（解密訊息唯一憑證）：</label>
+            <textarea id="txtPrivateKey" class="secret-area" readonly></textarea>
+        </div>
+    </div>
+
+    <div class="box">
+        <h3>💬 階段二：安全加密發送 (跨庫讀寫)</h3>
+        <label>收件人 Email (系統會自動去密鑰庫撈取對方的公鑰)</label>
+        <input type="email" id="targetEmail" placeholder="例如: bob@test.com">
+        <label>私密訊息內容</label>
+        <textarea id="msgContent" placeholder="在此輸入經過端到端加密的私密談話..."></textarea>
+        <button id="btnSend" class="btn-secondary">🔒 執行端到端加密並送入傳輸庫</button>
+    </div>
+
+    <div class="box">
+        <h3>📥 階段三：密文抓取與本地解密 (API Key B)</h3>
+        <label>請貼上您的「本地私鑰」(PEM 格式)</label>
+        <textarea id="inputPrivateKey" placeholder="-----BEGIN PRIVATE KEY-----&#10;...請在此貼上您的私鑰..."></textarea>
+        <button id="btnFetch">📥 從傳輸庫抓取並解密我的訊息</button>
+        
+        <label>收件箱歷史紀錄</label>
+        <div id="chatHistory" style="margin-top: 10px;"></div>
+    </div>
+</div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
