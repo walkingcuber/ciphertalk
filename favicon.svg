@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#1e293b" />
+      <stop offset="100%" stop-color="#0f172a" />
+    </linearGradient>
+
+    <linearGradient id="bubbleGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8" />
+      <stop offset="100%" stop-color="#0369a1" />
+    </linearGradient>
+
+    <linearGradient id="goldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fbbf24" />
+      <stop offset="100%" stop-color="#d97706" />
+    </linearGradient>
+
+    <filter id="dropShadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="12" stdDeviation="16" flood-color="#000000" flood-opacity="0.4" />
+    </filter>
+  </defs>
+
+  <rect width="512" height="512" rx="112" fill="url(#bgGrad)" />
+
+  <rect x="24" y="24" width="464" height="464" rx="96" fill="none" stroke="#334155" stroke-width="4" opacity="0.5" />
+
+  <g filter="url(#dropShadow)">
+    
+    <path d="M120 240 C120 140 200 110 256 110 C312 110 392 140 392 240 C392 340 312 360 256 360 C226 360 180 385 150 410 L150 345 C130 320 120 285 120 240 Z" fill="url(#bubbleGrad)" />
+    
+    <path d="M256 170 L320 190 L320 250 C320 300 280 320 256 330 C232 320 192 300 192 250 L192 190 Z" fill="#ffffff" />
+    
+    <path d="M226 215 V195 C226 175 240 160 256 160 C272 160 286 175 286 195 V215" fill="none" stroke="url(#goldGrad)" stroke-width="12" stroke-linecap="round" />
+    
+    <path d="M256 195 L300 210 L300 255 C300 290 272 305 256 312 C240 305 212 290 212 255 L212 210 Z" fill="url(#goldGrad)" />
+    
+    <circle cx="256" cy="245" r="7" fill="#ffffff" />
+    <path d="M252 250 L260 250 L263 275 L249 275 Z" fill="#ffffff" />
+    
+  </g>
+</svg>
