@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>🔒 CipherTalk Messenger v2.1</title>
+    <title>🔒 CipherTalk Messenger v2.2</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/forge/0.10.0/forge.min.js"></script>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', sans-serif; }
@@ -14,7 +14,10 @@
         /* 左側欄 */
         .sidebar { width: 320px; background: #fff; border-right: 1px solid #e4e6eb; display: flex; flex-direction: column; }
         .sidebar-header { padding: 16px; border-bottom: 1px solid #e4e6eb; background: #1e293b; color: white; }
-        .sidebar-header h3 { font-size: 20px; margin-bottom: 8px; }
+        .header-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+        .header-top h3 { font-size: 20px; }
+        .btn-logout { background: #ef4444; color: white; border: none; padding: 4px 8px; border-radius: 4px; font-size: 11px; cursor: pointer; display: none; }
+        .btn-logout:hover { background: #dc2626; }
         .user-status { font-size: 12px; color: #cbd5e1; word-break: break-all; }
         
         .config-area { padding: 12px; background: #f8fafc; border-bottom: 1px solid #e4e6eb; display: flex; flex-direction: column; gap: 8px; }
@@ -59,11 +62,14 @@
 <div class="messenger-container">
     <div class="sidebar">
         <div class="sidebar-header">
-            <h3>CipherTalk</h3>
-            <div id="lblMyStatus">🔴 請先註冊或登入</div>
+            <div class="header-top">
+                <h3>CipherTalk</h3>
+                <button id="btnLogout" class="btn-logout">登出</button>
+            </div>
+            <div id="lblMyStatus" class="user-status">🔴 請先註冊或登入</div>
         </div>
         
-        <div class="config-area">
+        <div id="authSection" class="config-area">
             <div class="auth-box">
                 <div class="auth-title">🆕 註冊新帳號</div>
                 <input type="email" id="regEmail" placeholder="輸入我的 Email">
