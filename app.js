@@ -27,11 +27,11 @@ const dbKeyVault = getFirestore(appKeyVault);
 const dbMessenger = getFirestore(appMessenger); 
 
 let currentUser = "";
-let currentPrivateKey = "";
+let currentPrivateKey = ""; // 🗝️ 密碼解鎖後會直接存於此變數中（API自動讀取，不需人腦記憶）
 let activeTargetUser = ""; 
-let unsubscribeChat = null; // 用來清除舊對話的即時監聽器
+let unsubscribeChat = null;
 
-// RSA 加解密演算
+// =================密碼學晶片工具=================
 function generateKeyPair() {
     const rsa = forge.pki.rsa;
     const keypair = rsa.generateKeyPair({bits: 2048, e: 0x10001});
@@ -39,6 +39,34 @@ function generateKeyPair() {
         privateKeyPem: forge.pki.privateKeyToPem(keypair.privateKey),
         publicKeyPem: forge.pki.publicKeyToPem(keypair.publicKey)
     };
+}
+// 使用密碼加密私鑰（AES-CBC 演算法）
+function encryptPrivateKeyWithPassword(privateKeyPem, password) {
+    const salt = forge.random.getBytesSync(8);
+    const key = forge.pkcs5.pbkdf2(password, salt, 1000, 16);
+    const iv = forge.random.getBytesSync(16);
+    const cipher = forge.cipher.createCipher('AES-CBC', key);
+    cipher.start({iv: iv});
+    cipher.update(forge.util.createBuffer(forge.util.encodeUtf8(privateKeyPem)));
+    cipher.finish();
+    return JSON.stringify({
+        salt: forge.util.bytesToHex(salt),
+        iv: forge.util.bytesToHex(iv),
+        ct: cipher.output.toHex()
+    });
+}
+// 使用密碼解密私鑰
+function decryptPrivateKeyWithPassword(encryptedJsonStr, password) {
+    const data = JSON.parse(encryptedJsonStr);
+    const salt = forge.util.hexToBytes(data.salt);
+    const iv = forge.util.hexToBytes(data.iv);
+    const ct = forge.util.hexToBytes(data.ct);
+    const key = forge.pkcs5.pbkdf2(password, salt, 1000, 16);
+    const decipher = forge.cipher.createDecipher('AES-CBC', key);
+    decipher.start({iv: iv});
+    decipher.update(forge.util.createBuffer(ct));
+    if(!decipher.finish()) throw new Error("密碼錯誤，金鑰解鎖失敗！");
+    return forge.util.decodeUtf8(decipher.output.getBytes());
 }
 function encryptRSA(text, publicKeyPem) {
     const publicKey = forge.pki.publicKeyFromPem(publicKeyPem);
@@ -56,60 +84,74 @@ function decryptRSA(cryptoB64, privateKeyPem) {
     return forge.util.decodeUtf8(decrypted);
 }
 
-// 註冊帳號
+// =================系統核心功能=================
+
+// 1. 註冊帳號：生成 RSA，並用「密碼」鎖住私鑰後一起存到雲端
 document.getElementById('btnRegister').addEventListener('click', async () => {
-    const email = document.getElementById('myEmail').value.trim().toLowerCase();
-    if (!email) return alert('請輸入 Email！');
-    document.getElementById('btnRegister').innerText = "註冊中...";
+    const email = document.getElementById('regEmail').value.trim().toLowerCase();
+    const password = document.getElementById('regPassword').value;
+    if (!email || !password) return alert('請填寫註冊 Email 與密碼！');
+    
+    document.getElementById('btnRegister').innerText = "安全金鑰部署中...";
     setTimeout(async () => {
         try {
             const { privateKeyPem, publicKeyPem } = generateKeyPair();
-            await setDoc(doc(dbKeyVault, "users", email), { email: email, public_key: publicKeyPem, created_at: Date.now() });
-            document.getElementById('txtPrivateKey').value = privateKeyPem;
-            document.getElementById('inputPrivateKey').value = privateKeyPem;
-            document.getElementById('keyBox').style.display = 'block';
-            alert('✅ 註冊成功！公鑰已上傳，請立刻複製下方黃框私鑰備份，並點擊下方登入！');
+            // 用密碼把私鑰鎖起來
+            const lockedPrivateKey = encryptPrivateKeyWithPassword(privateKeyPem, password);
+            
+            // 將公鑰與「被鎖住的私鑰」一起推上專案 A
+            await setDoc(doc(dbKeyVault, "users", email), {
+                email: email,
+                public_key: publicKeyPem,
+                encrypted_private_key: lockedPrivateKey,
+                created_at: Date.now()
+            });
+            
+            alert('🎉 註冊成功！金鑰已自動安全託管。現在您可以使用下方的密碼登入功能囉！');
+            document.getElementById('regEmail').value = "";
+            document.getElementById('regPassword').value = "";
         } catch (e) { alert('註冊失敗: ' + e.message); }
-        finally { document.getElementById('btnRegister').innerText = "✨ 註冊新帳號"; }
+        finally { document.getElementById('btnRegister').innerText = "完成註冊 (自動託管金鑰)"; }
     }, 200);
 });
 
-// 登入並同步朋友清單
+// 2. 密碼登入：自動去雲端抓取「加密私鑰」，並用密碼當場解開，自動填入系統變數！
 document.getElementById('btnLogin').addEventListener('click', async () => {
-    const email = document.getElementById('myEmail').value.trim().toLowerCase();
-    const privKey = document.getElementById('inputPrivateKey').value.trim();
-    if (!email || !privKey) return alert('請填寫 Email 與貼上私鑰！');
+    const email = document.getElementById('loginEmail').value.trim().toLowerCase();
+    const password = document.getElementById('loginPassword').value;
+    if (!email || !password) return alert('請輸入登入 Email 與密碼！');
 
-    currentUser = email;
-    currentPrivateKey = privKey;
-    document.getElementById('lblMyStatus').innerText = `🟢 在線: ${currentUser}`;
-    
-    // 載入好友名單 (撈取專案 A 所有註冊的人)
-    loadFriendList();
+    try {
+        const userDoc = await getDocs(query(collection(dbKeyVault, "users"), where("email", "==", email)));
+        if (userDoc.empty) return alert('❌ 找不到此帳號，請先在上方註冊！');
+        
+        let encryptedPrivateKeyFromCloud = "";
+        userDoc.forEach(d => encryptedPrivateKeyFromCloud = d.data().encrypted_private_key);
+        
+        // 自動解鎖私鑰並填入系統
+        currentPrivateKey = decryptPrivateKeyWithPassword(encryptedPrivateKeyFromCloud, password);
+        currentUser = email;
+        
+        document.getElementById('lblMyStatus').innerText = `🟢 在線: ${currentUser}`;
+        alert('🔑 密碼驗證成功，私鑰已自動解鎖填入背後 API！');
+        loadFriendList();
+    } catch (e) { alert('登入失敗: ' + e.message); }
 });
 
-// 撈取資料庫內的所有使用者，做成朋友名單
+// 3. 載入好友名單
 async function loadFriendList() {
     const friendListContainer = document.getElementById('friendList');
-    friendListContainer.innerHTML = "<div style='text-align:center; font-size:12px; color:#8e8e93;'>載入聯絡人中...</div>";
-    
+    friendListContainer.innerHTML = "載入聯絡人中...";
     try {
         const querySnapshot = await getDocs(collection(dbKeyVault, "users"));
         friendListContainer.innerHTML = "";
-        
         querySnapshot.forEach((doc) => {
             const userData = doc.data();
-            if (userData.email === currentUser) return; // 不把自己放在名單中
-            
+            if (userData.email === currentUser) return;
             const firstLetter = userData.email.charAt(0).toUpperCase();
             const item = document.createElement('div');
             item.className = 'friend-item';
-            item.innerHTML = `
-                <div class="friend-avatar">${firstLetter}</div>
-                <div class="friend-info"><div>${userData.email}</div></div>
-            `;
-            
-            // 點選聯絡人切換對話視窗
+            item.innerHTML = `<div class="friend-avatar">${firstLetter}</div><div class="friend-info"><div>${userData.email}</div></div>`;
             item.addEventListener('click', () => {
                 document.querySelectorAll('.friend-item').forEach(el => el.classList.remove('active'));
                 item.classList.add('active');
@@ -117,99 +159,74 @@ async function loadFriendList() {
             });
             friendListContainer.appendChild(item);
         });
-        if(friendListContainer.innerHTML === "") {
-            friendListContainer.innerHTML = "<div style='text-align:center; font-size:12px; color:#8e8e93;'>目前沒有其他使用者。</div>";
-        }
-    } catch(e) { alert("好友名單載入失敗: " + e.message); }
+    } catch(e) { console.error(e); }
 }
 
-// 開啟並「即時監聽同步」與特定朋友的對話
+// 4. 即時同步聊天室
 function openChatWith(targetEmail) {
     activeTargetUser = targetEmail;
-    document.getElementById('chatTitle').innerText = `💬 與 ${targetEmail} 加密通訊中`;
+    document.getElementById('chatTitle').innerText = `💬 與 ${targetEmail} 通訊中 (金鑰已自動就位)`;
     document.getElementById('msgContent').disabled = false;
     document.getElementById('btnSend').disabled = false;
-    
-    // 如果之前有監聽別人的對話，先斷開連線
     if (unsubscribeChat) unsubscribeChat();
     
     const chatHistory = document.getElementById('chatHistory');
-    chatHistory.innerHTML = "<div style='text-align:center; color:#8e8e93;'>🔒 開啟端到端安全通道...</div>";
-    
-    // 監聽傳輸庫(專案 B) 裡，所有我跟對方的對話紀錄
     const q = query(collection(dbMessenger, "messages"), orderBy("timestamp", "asc"));
     
     unsubscribeChat = onSnapshot(q, (snapshot) => {
         chatHistory.innerHTML = "";
-        let hasMessage = false;
-        
         snapshot.forEach((doc) => {
             const msg = doc.data();
-            
-            // 篩選出「我傳給對方」或「對方傳給我」的訊息
             const isMySent = (msg.sender_email === currentUser && msg.receiver_email === activeTargetUser);
             const isMyReceived = (msg.sender_email === activeTargetUser && msg.receiver_email === currentUser);
             
             if (isMySent || isMyReceived) {
-                hasMessage = true;
                 const rowClass = isMySent ? 'msg-row me' : 'msg-row other';
                 let displayText = "";
-                
                 try {
-                    // 關鍵：如果是自己傳的，解密針對自己公鑰加密的欄位；如果是別人傳的，解密針對自己加密的欄位
-                    // 為了架構簡單安全，發送端發信時會生成兩份密文（一份用對方公鑰加密，一份用自己公鑰加密）
+                    // 自動使用解密變數進行對話翻譯
                     const cipherToDecrypt = isMySent ? msg.encrypted_for_sender : msg.encrypted_for_receiver;
                     displayText = decryptRSA(cipherToDecrypt, currentPrivateKey);
-                } catch (err) {
-                    displayText = "❌ 密文解密失敗 (金鑰不對)";
-                }
+                } catch (err) { displayText = "❌ 密文解密失敗"; }
                 
-                chatHistory.innerHTML += `
-                    <div class="${rowClass}">
-                        <div class="bubble ${displayText.startsWith('❌') ? 'error-bubble' : ''}">${displayText}</div>
-                    </div>`;
+                chatHistory.innerHTML += `<div class="${rowClass}"><div class="bubble">${displayText}</div></div>`;
             }
         });
-        
-        if (!hasMessage) {
-            chatHistory.innerHTML = "<div style='text-align:center; color:#8e8e93; font-size:13px;'>沒有歷史訊息，輸入下方訊息開始聊天！</div>";
-        }
-        chatHistory.scrollTop = chatHistory.scrollHeight; // 自動滾動到最底
+        chatHistory.scrollTop = chatHistory.scrollHeight;
     });
 }
 
-// 發送訊息（同步雙向加密技術）
-document.getElementById('btnSend').addEventListener('click', async () => {
-    const msg = document.getElementById('msgContent').value;
+// 5. 發送訊息核心 (綁定點擊按鈕與按 Enter 鍵)
+async function sendMessage() {
+    const msgInput = document.getElementById('msgContent');
+    const msg = msgInput.value;
     if (!msg || !activeTargetUser) return;
     
     try {
-        // 1. 去專案 A 撈取「對方」和「自己」的公鑰
         const targetUserDoc = await getDocs(query(collection(dbKeyVault, "users"), where("email", "==", activeTargetUser)));
         const meUserDoc = await getDocs(query(collection(dbKeyVault, "users"), where("email", "==", currentUser)));
-        
-        let targetPubKey = "";
-        let myPubKey = "";
-        
+        let targetPubKey = "", myPubKey = "";
         targetUserDoc.forEach(d => targetPubKey = d.data().public_key);
         meUserDoc.forEach(d => myPubKey = d.data().public_key);
         
-        if (!targetPubKey) return alert('找不到對方的公鑰！');
-        
-        // 2. 用對方的公鑰加密（給對方看）
         const encryptedForReceiver = encryptRSA(msg, targetPubKey);
-        // 3. 用自己的公鑰加密（留給自己看，這樣自己才知道發了什麼！）
         const encryptedForSender = encryptRSA(msg, myPubKey);
         
-        // 4. 把雙密文包裹送入傳輸庫(專案 B)
         await addDoc(collection(dbMessenger, "messages"), {
             sender_email: currentUser,
             receiver_email: activeTargetUser,
-            encrypted_for_receiver: encryptedForReceiver, // 給接收方解密的密文
-            encrypted_for_sender: encryptedForSender,     // 給發送方解密的密文
+            encrypted_for_receiver: encryptedForReceiver,
+            encrypted_for_sender: encryptedForSender,
             timestamp: Date.now()
         });
-        
-        document.getElementById('msgContent').value = "";
+        msgInput.value = "";
     } catch (e) { alert('發送失敗: ' + e.message); }
+}
+
+document.getElementById('btnSend').addEventListener('click', sendMessage);
+// 💡 自動監聽 Enter 鍵，按下去立刻執行發送 API！
+document.getElementById('msgContent').addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') {
+        sendMessage();
+    }
 });
