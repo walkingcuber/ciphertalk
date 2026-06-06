@@ -1,3 +1,5 @@
+console.log("🚀 成功載入 v2.3 最新版代碼！"); // 可以在 F12 開發者工具的主控台看到這行
+
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
 import { getFirestore, doc, setDoc, getDoc, collection, addDoc, query, getDocs, onSnapshot, orderBy } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
@@ -115,7 +117,7 @@ document.getElementById('btnRegister').addEventListener('click', async () => {
     }, 200);
 });
 
-// 2. 登入成功後：隱藏區塊、顯示登出按鈕
+// 登入按鈕監聽
 document.getElementById('btnLogin').addEventListener('click', async () => {
     const email = document.getElementById('loginEmail').value.trim().toLowerCase();
     const password = document.getElementById('loginPassword').value;
@@ -131,46 +133,53 @@ document.getElementById('btnLogin').addEventListener('click', async () => {
         currentPrivateKey = decryptPrivateKeyWithPassword(encryptedPrivateKeyFromCloud, password);
         currentUser = email;
         
-        document.getElementById('lblMyStatus').innerText = `🟢 在線: ${currentUser}`;
-        document.getElementById('lblMyStatus').style.color = "#4ade80"; // 變成綠色字體
+        // 1. 修改狀態文字與顏色
+        const lblStatus = document.getElementById('lblMyStatus');
+        lblStatus.innerText = `🟢 在線: ${currentUser}`;
+        lblStatus.style.color = "#4ade80"; 
         
-        // 🌟 核心修改：隱藏登入區塊，顯示登出按鈕
-        document.getElementById('authSection').style.display = 'none';
-        document.getElementById('btnLogout').style.display = 'block';
+        // 2. 隱藏登入面板，顯示登出按鈕
+        const authSection = document.getElementById('authSection');
+        if (authSection) {
+            authSection.style.display = 'none';
+        }
+        const btnLogout = document.getElementById('btnLogout');
+        if (btnLogout) {
+            btnLogout.style.display = 'block';
+        }
         
-        // 清空輸入框
+        // 3. 清空輸入框
         document.getElementById('loginEmail').value = "";
         document.getElementById('loginPassword').value = "";
 
+        // 4. 載入聯絡人
         loadFriendList();
     } catch (e) { alert('登入失敗: 密碼錯誤或網路異常'); }
 });
 
-// 2.5 登出功能：恢復登入介面，清空記憶體與聊天室
+// 登出功能
 document.getElementById('btnLogout').addEventListener('click', () => {
-    // 抹除記憶體中的金鑰與帳號
     currentUser = "";
     currentPrivateKey = "";
     activeTargetUser = "";
-    
-    // 關閉聊天室監聽
     if (unsubscribeChat) {
         unsubscribeChat();
         unsubscribeChat = null;
     }
     
-    // 恢復 UI 狀態
     document.getElementById('lblMyStatus').innerText = "🔴 請先註冊或登入";
     document.getElementById('lblMyStatus').style.color = "#cbd5e1";
-    document.getElementById('authSection').style.display = 'flex';
-    document.getElementById('btnLogout').style.display = 'none';
     
-    // 清空朋友清單與對話框
+    const authSection = document.getElementById('authSection');
+    if (authSection) authSection.style.display = 'flex';
+    
+    const btnLogout = document.getElementById('btnLogout');
+    if (btnLogout) btnLogout.style.display = 'none';
+    
     document.getElementById('friendList').innerHTML = "<div style='text-align:center; color:#8e8e93; font-size:12px; margin-top:20px;'>請先登入以載入朋友名單</div>";
     document.getElementById('chatTitle').innerText = "💬 請選擇左側聯絡人開始聊天";
     document.getElementById('chatHistory').innerHTML = "<div style='text-align: center; color: #8e8e93; margin-top: 50px; font-size: 14px;'>沒有選取的對話</div>";
     
-    // 鎖住輸入框
     document.getElementById('msgContent').disabled = true;
     document.getElementById('btnSend').disabled = true;
 });
