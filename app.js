@@ -1,10 +1,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-import { getFirestore, doc, setDoc, collection, addDoc, query, where, getDocs, orderBy } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+import { getFirestore, doc, setDoc, collection, addDoc, query, where, getDocs, onSnapshot, orderBy } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 import "https://cdnjs.cloudflare.com/ajax/libs/forge/0.10.0/forge.min.js";
 
-// ===================================================
-// 🔑 專案 A 設定：管理「公鑰」的專案（私）
-// ===================================================
 const configKeyVault = {
     apiKey: "AIzaSyBK86_OZuKQbIRjZBFNXv1iNmS9yHgPks8",
     authDomain: "ciphertalk-keyvault.firebaseapp.com",
@@ -15,9 +12,6 @@ const configKeyVault = {
     appId: "1:510292113634:web:8bde2742246de3e40746bb"
 };
 
-// ===================================================
-// 💬 專案 B 設定：做「訊息傳輸」的專案（訊）
-// ===================================================
 const configMessenger = {
     apiKey: "AIzaSyA0Tn8AKO4XlQOfFSoeq-Mdbkb45j32os0",
     authDomain: "ciphertalk-messenger.firebaseapp.com",
@@ -27,13 +21,17 @@ const configMessenger = {
     appId: "1:1095049485231:web:51220bc48d9761138c6d5a"
 };
 
-// 初始化 Firebase
 const appKeyVault = initializeApp(configKeyVault, "KeyVaultInstance");
 const appMessenger = initializeApp(configMessenger, "MessengerInstance");
 const dbKeyVault = getFirestore(appKeyVault);   
 const dbMessenger = getFirestore(appMessenger); 
 
-// RSA 密碼學晶片
+let currentUser = "";
+let currentPrivateKey = "";
+let activeTargetUser = ""; 
+let unsubscribeChat = null; // 用來清除舊對話的即時監聽器
+
+// RSA 加解密演算
 function generateKeyPair() {
     const rsa = forge.pki.rsa;
     const keypair = rsa.generateKeyPair({bits: 2048, e: 0x10001});
@@ -58,123 +56,160 @@ function decryptRSA(cryptoB64, privateKeyPem) {
     return forge.util.decodeUtf8(decrypted);
 }
 
-// 介面更新：同步狀態欄
-function updateStatusHeader(email) {
-    document.getElementById('lblMyStatus').innerText = `🟢 已連線身分: ${email}`;
-}
-
-// 功能 1：註冊帳號
+// 註冊帳號
 document.getElementById('btnRegister').addEventListener('click', async () => {
     const email = document.getElementById('myEmail').value.trim().toLowerCase();
     if (!email) return alert('請輸入 Email！');
-    
-    document.getElementById('btnRegister').innerText = "生成中...";
+    document.getElementById('btnRegister').innerText = "註冊中...";
     setTimeout(async () => {
         try {
             const { privateKeyPem, publicKeyPem } = generateKeyPair();
             await setDoc(doc(dbKeyVault, "users", email), { email: email, public_key: publicKeyPem, created_at: Date.now() });
-            
             document.getElementById('txtPrivateKey').value = privateKeyPem;
             document.getElementById('inputPrivateKey').value = privateKeyPem;
             document.getElementById('keyBox').style.display = 'block';
-            updateStatusHeader(email);
-            alert('✅ 註冊成功！公鑰已傳上雲端，請複製備份黃框私鑰！');
+            alert('✅ 註冊成功！公鑰已上傳，請立刻複製下方黃框私鑰備份，並點擊下方登入！');
         } catch (e) { alert('註冊失敗: ' + e.message); }
         finally { document.getElementById('btnRegister').innerText = "✨ 註冊新帳號"; }
     }, 200);
 });
 
-// 功能 2：加密並發送訊息
-document.getElementById('btnSend').addEventListener('click', async () => {
-    const myEmail = document.getElementById('myEmail').value.trim().toLowerCase();
-    const targetEmail = document.getElementById('targetEmail').value.trim().toLowerCase();
-    const msg = document.getElementById('msgContent').value;
+// 登入並同步朋友清單
+document.getElementById('btnLogin').addEventListener('click', async () => {
+    const email = document.getElementById('myEmail').value.trim().toLowerCase();
+    const privKey = document.getElementById('inputPrivateKey').value.trim();
+    if (!email || !privKey) return alert('請填寫 Email 與貼上私鑰！');
+
+    currentUser = email;
+    currentPrivateKey = privKey;
+    document.getElementById('lblMyStatus').innerText = `🟢 在線: ${currentUser}`;
     
-    if (!myEmail || !targetEmail || !msg) return alert('發送失敗：請確認我的Email、對方Email、訊息內容皆已填寫！');
+    // 載入好友名單 (撈取專案 A 所有註冊的人)
+    loadFriendList();
+});
+
+// 撈取資料庫內的所有使用者，做成朋友名單
+async function loadFriendList() {
+    const friendListContainer = document.getElementById('friendList');
+    friendListContainer.innerHTML = "<div style='text-align:center; font-size:12px; color:#8e8e93;'>載入聯絡人中...</div>";
     
     try {
-        const targetUserDoc = await getDocs(query(collection(dbKeyVault, "users"), where("email", "==", targetEmail)));
-        if (targetUserDoc.empty) return alert('❌ 雲端找不到對方的公鑰，請確認對方註冊過！');
+        const querySnapshot = await getDocs(collection(dbKeyVault, "users"));
+        friendListContainer.innerHTML = "";
+        
+        querySnapshot.forEach((doc) => {
+            const userData = doc.data();
+            if (userData.email === currentUser) return; // 不把自己放在名單中
+            
+            const firstLetter = userData.email.charAt(0).toUpperCase();
+            const item = document.createElement('div');
+            item.className = 'friend-item';
+            item.innerHTML = `
+                <div class="friend-avatar">${firstLetter}</div>
+                <div class="friend-info"><div>${userData.email}</div></div>
+            `;
+            
+            // 點選聯絡人切換對話視窗
+            item.addEventListener('click', () => {
+                document.querySelectorAll('.friend-item').forEach(el => el.classList.remove('active'));
+                item.classList.add('active');
+                openChatWith(userData.email);
+            });
+            friendListContainer.appendChild(item);
+        });
+        if(friendListContainer.innerHTML === "") {
+            friendListContainer.innerHTML = "<div style='text-align:center; font-size:12px; color:#8e8e93;'>目前沒有其他使用者。</div>";
+        }
+    } catch(e) { alert("好友名單載入失敗: " + e.message); }
+}
+
+// 開啟並「即時監聽同步」與特定朋友的對話
+function openChatWith(targetEmail) {
+    activeTargetUser = targetEmail;
+    document.getElementById('chatTitle').innerText = `💬 與 ${targetEmail} 加密通訊中`;
+    document.getElementById('msgContent').disabled = false;
+    document.getElementById('btnSend').disabled = false;
+    
+    // 如果之前有監聽別人的對話，先斷開連線
+    if (unsubscribeChat) unsubscribeChat();
+    
+    const chatHistory = document.getElementById('chatHistory');
+    chatHistory.innerHTML = "<div style='text-align:center; color:#8e8e93;'>🔒 開啟端到端安全通道...</div>";
+    
+    // 監聽傳輸庫(專案 B) 裡，所有我跟對方的對話紀錄
+    const q = query(collection(dbMessenger, "messages"), orderBy("timestamp", "asc"));
+    
+    unsubscribeChat = onSnapshot(q, (snapshot) => {
+        chatHistory.innerHTML = "";
+        let hasMessage = false;
+        
+        snapshot.forEach((doc) => {
+            const msg = doc.data();
+            
+            // 篩選出「我傳給對方」或「對方傳給我」的訊息
+            const isMySent = (msg.sender_email === currentUser && msg.receiver_email === activeTargetUser);
+            const isMyReceived = (msg.sender_email === activeTargetUser && msg.receiver_email === currentUser);
+            
+            if (isMySent || isMyReceived) {
+                hasMessage = true;
+                const rowClass = isMySent ? 'msg-row me' : 'msg-row other';
+                let displayText = "";
+                
+                try {
+                    // 關鍵：如果是自己傳的，解密針對自己公鑰加密的欄位；如果是別人傳的，解密針對自己加密的欄位
+                    // 為了架構簡單安全，發送端發信時會生成兩份密文（一份用對方公鑰加密，一份用自己公鑰加密）
+                    const cipherToDecrypt = isMySent ? msg.encrypted_for_sender : msg.encrypted_for_receiver;
+                    displayText = decryptRSA(cipherToDecrypt, currentPrivateKey);
+                } catch (err) {
+                    displayText = "❌ 密文解密失敗 (金鑰不對)";
+                }
+                
+                chatHistory.innerHTML += `
+                    <div class="${rowClass}">
+                        <div class="bubble ${displayText.startsWith('❌') ? 'error-bubble' : ''}">${displayText}</div>
+                    </div>`;
+            }
+        });
+        
+        if (!hasMessage) {
+            chatHistory.innerHTML = "<div style='text-align:center; color:#8e8e93; font-size:13px;'>沒有歷史訊息，輸入下方訊息開始聊天！</div>";
+        }
+        chatHistory.scrollTop = chatHistory.scrollHeight; // 自動滾動到最底
+    });
+}
+
+// 發送訊息（同步雙向加密技術）
+document.getElementById('btnSend').addEventListener('click', async () => {
+    const msg = document.getElementById('msgContent').value;
+    if (!msg || !activeTargetUser) return;
+    
+    try {
+        // 1. 去專案 A 撈取「對方」和「自己」的公鑰
+        const targetUserDoc = await getDocs(query(collection(dbKeyVault, "users"), where("email", "==", activeTargetUser)));
+        const meUserDoc = await getDocs(query(collection(dbKeyVault, "users"), where("email", "==", currentUser)));
         
         let targetPubKey = "";
+        let myPubKey = "";
+        
         targetUserDoc.forEach(d => targetPubKey = d.data().public_key);
+        meUserDoc.forEach(d => myPubKey = d.data().public_key);
         
-        const encryptedMsg = encryptRSA(msg, targetPubKey);
+        if (!targetPubKey) return alert('找不到對方的公鑰！');
         
+        // 2. 用對方的公鑰加密（給對方看）
+        const encryptedForReceiver = encryptRSA(msg, targetPubKey);
+        // 3. 用自己的公鑰加密（留給自己看，這樣自己才知道發了什麼！）
+        const encryptedForSender = encryptRSA(msg, myPubKey);
+        
+        // 4. 把雙密文包裹送入傳輸庫(專案 B)
         await addDoc(collection(dbMessenger, "messages"), {
-            sender_email: myEmail,
-            receiver_email: targetEmail,
-            encrypted_text: encryptedMsg,
+            sender_email: currentUser,
+            receiver_email: activeTargetUser,
+            encrypted_for_receiver: encryptedForReceiver, // 給接收方解密的密文
+            encrypted_for_sender: encryptedForSender,     // 給發送方解密的密文
             timestamp: Date.now()
         });
         
         document.getElementById('msgContent').value = "";
-        alert('🚀 訊息已加密送達！');
-        // 自動刷新聊天紀錄
-        document.getElementById('btnFetch').click();
-    } catch (e) { alert('傳輸失敗: ' + e.message); }
-});
-
-// 功能 3：拉取全通訊紀錄並在前端進行「氣泡化解密」
-document.getElementById('btnFetch').addEventListener('click', async () => {
-    const myEmail = document.getElementById('myEmail').value.trim().toLowerCase();
-    const privateKeyPem = document.getElementById('inputPrivateKey').value.trim();
-    
-    if (!myEmail || !privateKeyPem) return alert('請先輸入我的 Email 並配置正確的私鑰！');
-    updateStatusHeader(myEmail);
-    
-    const chatContainer = document.getElementById('chatHistory');
-    chatContainer.innerHTML = "<div style='text-align:center; color:#94a3b8;'>📥 正在同步雲端安全訊息...</div>";
-    
-    try {
-        // 同時撈取「我收到的」和「我發出的」訊息，才能組成聊天室
-        const qReceived = query(collection(dbMessenger, "messages"), where("receiver_email", "==", myEmail));
-        const qSent = query(collection(dbMessenger, "messages"), where("sender_email", "==", myEmail));
-        
-        const [snapReceived, snapSent] = await Promise.all([getDocs(qReceived), getDocs(qSent)]);
-        
-        let allMessages = [];
-        snapReceived.forEach(doc => allMessages.push({ id: doc.id, ...doc.data(), type: 'other' }));
-        snapSent.forEach(doc => allMessages.push({ id: doc.id, ...doc.data(), type: 'me' }));
-        
-        // 依時間排序
-        allMessages.sort((a, b) => a.timestamp - b.timestamp);
-        
-        chatContainer.innerHTML = "";
-        if (allMessages.length === 0) {
-            chatContainer.innerHTML = "<div style='text-align:center; color:#94a3b8; font-size:13px;'>目前沒有通訊紀錄。</div>";
-            return;
-        }
-        
-        allMessages.forEach((msg) => {
-            if (msg.type === 'me') {
-                // 自己發出去的，雖然雲端上是密文，但因發送端通常不存私鑰解密，為了測試方便，我們在前端如果是 "me" 且解不開時，可以直接提示「已安全發送（密文狀態）」
-                chatContainer.innerHTML += `
-                    <div class="msg-wrapper me">
-                        <span class="sender-name">我 發給 ${msg.receiver_email}</span>
-                        <div class="bubble">🔒 [已加密發送]</div>
-                    </div>`;
-            } else {
-                // 別人傳給我的，使用我的私鑰解密
-                try {
-                    const decryptedText = decryptRSA(msg.encrypted_text, privateKeyPem);
-                    chatContainer.innerHTML += `
-                        <div class="msg-wrapper other">
-                            <span class="sender-name">${msg.sender_email}</span>
-                            <div class="bubble">${decryptedText}</div>
-                        </div>`;
-                } catch (err) {
-                    chatContainer.innerHTML += `
-                        <div class="msg-wrapper other">
-                            <span class="sender-name">${msg.sender_email}</span>
-                            <div class="bubble error-bubble">❌ 密文解密失敗 (私鑰不符)</div>
-                        </div>`;
-                }
-            }
-        });
-        
-        // 自動捲動到最底
-        chatContainer.scrollTop = chatContainer.scrollHeight;
-        
-    } catch (e) { alert('同步失敗: ' + e.message); }
+    } catch (e) { alert('發送失敗: ' + e.message); }
 });
